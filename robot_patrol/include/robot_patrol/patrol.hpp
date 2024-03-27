@@ -5,6 +5,11 @@
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include <memory>
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <vector>
+
 class Patrol : public rclcpp::Node {
 public:
   Patrol();
