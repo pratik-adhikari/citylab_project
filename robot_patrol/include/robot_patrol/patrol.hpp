@@ -10,6 +10,7 @@ public:
   Patrol();
 
 private:
+  // subscriptions and publishers
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr
       laser_subscription_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr velocity_publisher_;
@@ -17,14 +18,12 @@ private:
       filtered_scan_publisher_;
   rclcpp::TimerBase::SharedPtr timer_;
 
-  float direction_ = 0.0;     // Direction to move in radians, 0 means straight
-  float max_distance_ = -1.0; // Maximum distance in the safest direction
-  std::vector<float> global_filtered_ranges;
+  float direction_ = 0.0; // Safest direction to move in radians
+  std::vector<float> global_filtered_ranges; // Processed range data
 
+  // callbacks and utility functions
   void laserCallback(const sensor_msgs::msg::LaserScan::SharedPtr msg);
-
   void filterScanAndPublish(const sensor_msgs::msg::LaserScan::SharedPtr &msg);
-
   std::vector<float> divideIntoSectionsAndFindMin();
   void findSafestDirection(const std::vector<float> &min_distances);
   void controlLoop();
