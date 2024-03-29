@@ -5,52 +5,100 @@ using std::placeholders::_1;
 Patrol::Patrol() : Node("patrol") {
   laser_subscription_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
       "/scan", 10, std::bind(&Patrol::laserCallback, this, _1));
+  filtered_scan_publisher_ =
+      this->create_publisher<sensor_msgs::msg::LaserScan>("filtered_scan", 10);
+  velocity_publisher_ =
+      this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
+  timer_ = this->create_wall_timer(std::chrono::milliseconds(100),
+                                   std::bind(&Patrol::controlLoop, this));
 }
 
 void Patrol::laserCallback(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
-  int sections = 36;
-  std::vector<float> min_distances(sections, std::numeric_limits<float>::max());
+  filterScanAndPublish(msg);
+  auto min_distances = divideIntoSectionsAndFindMin();
 
-  auto front_start_angle = M_PI;   // Start of the front 180 degrees in radians
-  auto front_end_angle = 2 * M_PI; // End of the front 180 degrees in radians
-  int start_index = static_cast<int>((front_start_angle - msg->angle_min) /
-                                     msg->angle_increment);
-  int end_index = static_cast<int>((front_end_angle - msg->angle_min) /
-                                   msg->angle_increment);
+  findSafestDirection(min_distances);
+}
 
-  start_index = std::max(start_index, 0);
-  end_index = std::min(end_index, static_cast<int>(msg->ranges.size()));
+void Patrol::filterScanAndPublish(
+    const sensor_msgs::msg::LaserScan::SharedPtr &msg) {
+  // Prepare for new scan data
+  global_filtered_ranges.clear();
 
-  // Assuming a large distance for out-of-range values
-  const float max_reasonable_distance = 30.0; // laser's maximum range
+  // Indices for quarter and three quarters
+  size_t quarterIdx = msg->ranges.size() / 4;
+  size_t threeQuartersIdx = msg->ranges.size() * 0.75;
 
-  for (int i = start_index; i < end_index; ++i) {
-    float distance = msg->ranges[i];
-    if (std::isinf(distance)) {
-      distance = max_reasonable_distance;
-    }
-    int section = (i - start_index) * sections / (end_index - start_index);
-    min_distances[section] = std::min(min_distances[section], distance);
+  // Process and combine ranges
+  for (size_t i = threeQuartersIdx; i < msg->ranges.size(); ++i) {
+    global_filtered_ranges.push_back(std::min(msg->ranges[i], 50.0f));
+  }
+  for (size_t i = 0; i <= quarterIdx; ++i) {
+    global_filtered_ranges.push_back(std::min(msg->ranges[i], 50.0f));
   }
 
-  // the section with maximum minimum distance (safest direction)
-  auto max_it = std::max_element(min_distances.begin(), min_distances.end());
-  int safest_section = std::distance(min_distances.begin(), max_it);
+  sensor_msgs::msg::LaserScan filtered_scan = *msg;
+  filtered_scan.ranges = global_filtered_ranges;
+  filtered_scan_publisher_->publish(filtered_scan);
+}
 
-  // the angle to the center of the safest section
-  float angle_increment_per_section =
-      (front_end_angle - front_start_angle) / sections;
-  float safest_angle =
-      front_start_angle + (safest_section + 0.5) * angle_increment_per_section;
-  safest_angle -= M_PI; // Adjusting to the [-pi, pi]
+std::vector<float> Patrol::divideIntoSectionsAndFindMin() {
+  const int sections = 10;
+  std::vector<float> section_min_distances(sections,
+                                           std::numeric_limits<float>::max());
 
-  // safest angle
-  float safest_angle_degrees = safest_angle * 180.0 / M_PI;
+  // Cap all distances at 50
+  for (auto &distance : global_filtered_ranges) {
+    distance = std::min(distance, 50.0f);
+  }
 
-  RCLCPP_INFO(
-      this->get_logger(),
-      "Safest Direction: Section %d at angle %f degrees with distance %f",
-      safest_section + 1, safest_angle_degrees, *max_it);
+  int points_per_section = global_filtered_ranges.size() / sections;
+
+  for (int section = 0; section < sections; ++section) {
+    // Define section boundaries
+    auto start_itr =
+        global_filtered_ranges.begin() + section * points_per_section;
+    auto end_itr = (section + 1 == sections) ? global_filtered_ranges.end()
+                                             : start_itr + points_per_section;
+
+    // Find minimum in section
+    float min_distance = *std::min_element(start_itr, end_itr);
+    section_min_distances[section] = min_distance;
+  }
+
+  return section_min_distances;
+}
+
+void Patrol::findSafestDirection(const std::vector<float> &min_distances) {
+  // Find the index of the section with the maximum minimum distance.
+  auto max_itr = std::max_element(min_distances.begin(), min_distances.end());
+  size_t safest_section = std::distance(min_distances.begin(), max_itr);
+
+  // Angle calculation per section (180 degrees / 10 sections).
+  float angle_per_section = M_PI / 10.0; // In radians
+  // Calculate angle to turn towards the safest section.
+  direction_ = (safest_section * angle_per_section + angle_per_section / 2.0) -
+               M_PI / 2.0;
+
+  // Log info about the safest direction.
+  RCLCPP_INFO(this->get_logger(),
+              "Safest direction: Section %zu, Angle: %f radians (%f degrees), "
+              "Max distance: %f",
+              safest_section + 1, direction_, direction_ * (180 / M_PI),
+              *max_itr);
+}
+
+void Patrol::controlLoop() {
+  geometry_msgs::msg::Twist cmd_vel;
+  cmd_vel.linear.x = 0.1; // Forward speed
+
+  cmd_vel.angular.z = direction_ / 2; // Angular velocity: direction_ by 1/2
+
+  velocity_publisher_->publish(cmd_vel); // Publish the command velocity
+
+  RCLCPP_INFO(this->get_logger(),
+              "Publishing velocity: linear.x=%f, angular.z=%f degrees",
+              cmd_vel.linear.x, cmd_vel.angular.z * (180 / M_PI));
 }
 
 int main(int argc, char *argv[]) {
