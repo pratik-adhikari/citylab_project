@@ -22,28 +22,30 @@ void Patrol::laserCallback(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
 
 void Patrol::filterScanAndPublish(
     const sensor_msgs::msg::LaserScan::SharedPtr &msg) {
-  // Prepare for new scan data
   global_filtered_ranges.clear();
+  size_t totalRanges = msg->ranges.size();
+  size_t quarterIdx = totalRanges / 4, threeQuartersIdx = totalRanges * 0.75;
 
-  // Indices for quarter and three quarters
-  size_t quarterIdx = msg->ranges.size() / 4;
-  size_t threeQuartersIdx = msg->ranges.size() * 0.75;
-
-  // Process and combine ranges
-  for (size_t i = threeQuartersIdx; i < msg->ranges.size(); ++i) {
-    global_filtered_ranges.push_back(std::min(msg->ranges[i], 50.0f));
+  // Directly process fourth quadrant data and then first quadrant data
+  for (size_t i = threeQuartersIdx; i < totalRanges; ++i) {
+    global_filtered_ranges.push_back(
+        std::isinf(msg->ranges[i]) ? 5.0f : msg->ranges[i]);
   }
   for (size_t i = 0; i <= quarterIdx; ++i) {
-    global_filtered_ranges.push_back(std::min(msg->ranges[i], 50.0f));
+    global_filtered_ranges.push_back(
+        std::isinf(msg->ranges[i]) ? 5.0f : msg->ranges[i]);
   }
 
+  // Update and publish the filtered scan
   sensor_msgs::msg::LaserScan filtered_scan = *msg;
   filtered_scan.ranges = global_filtered_ranges;
+  filtered_scan.angle_min = -M_PI / 2;
+  filtered_scan.angle_max = M_PI / 2;
   filtered_scan_publisher_->publish(filtered_scan);
 }
 
 std::vector<float> Patrol::divideIntoSectionsAndFindMin() {
-  const int sections = 36;
+  const int sections = 17;
   std::vector<float> section_min_distances(sections,
                                            std::numeric_limits<float>::max());
 
@@ -106,12 +108,12 @@ void Patrol::findSafestDirection(const std::vector<float> &min_distances) {
     section_distances += std::to_string(distance) + " ";
   }
 
-  // Log information about the safest direction.
-  RCLCPP_INFO(this->get_logger(),
-              "Safest direction: Section %zu, Angle: %f radians (%f degrees), "
-              "Max min distance: %f. Section distances: [%s]",
-              safest_section + 1, direction_, direction_ * (180.0 / M_PI),
-              max_distance, section_distances.c_str());
+  //   // Log information about the safest direction.
+  //   RCLCPP_INFO(this->get_logger(),
+  //               "Safest direction: Section %zu, Angle: %f radians (%f
+  //               degrees), " "Max min distance: %f. Section distances: [%s]",
+  //               safest_section + 1, direction_, direction_ * (180.0 / M_PI),
+  //               max_distance, section_distances.c_str());
 }
 
 void Patrol::controlLoop() {
@@ -120,7 +122,7 @@ void Patrol::controlLoop() {
 
   cmd_vel.angular.z = direction_ / 2; // Angular velocity: direction_ by 1/2
 
-  velocity_publisher_->publish(cmd_vel); // Publish the command velocity
+  //   velocity_publisher_->publish(cmd_vel); // Publish the command velocity
 
   //   RCLCPP_INFO(this->get_logger(),
   //               "Publishing velocity: linear.x=%f, angular.z=%f degrees",
