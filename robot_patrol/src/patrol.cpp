@@ -69,7 +69,7 @@ std::vector<float> Patrol::divideIntoSectionsAndFindMin() {
 }
 
 void Patrol::findSafestDirection(const std::vector<float> &min_distances) {
-  const float criticalDistance = 0.6;
+  const float criticalDistance = 0.4;
   size_t safest_section = 0;
   float max_distance = 0.0; // tracking maximum individual distance
 
@@ -83,7 +83,7 @@ void Patrol::findSafestDirection(const std::vector<float> &min_distances) {
       current_distance +=
           std::max(0.0f, min_distances[i + 1] - criticalDistance);
 
-    if (current_distance > max_distance && min_distances[i] > 0.8) {
+    if (current_distance > max_distance && min_distances[i] > 0.6) {
       safest_section = i;
       max_distance =
           current_distance; // Useing the combined metric for comparison

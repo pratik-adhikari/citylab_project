@@ -10,7 +10,6 @@ public:
   Patrol();
 
 private:
-  // Subscriptions and publishers
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr
       laser_subscription_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr velocity_publisher_;
@@ -18,13 +17,11 @@ private:
       filtered_scan_publisher_;
   rclcpp::TimerBase::SharedPtr timer_;
 
-  float direction_ = 0.0; // Safest direction to move in radians
-  std::vector<float>
-      global_filtered_ranges; // Processed range data from laser scan
-  size_t num_sections_ =
-      15; // Number of sections to divide the scan data into for analysis
+  float direction_ = 0.0;
+  std::vector<float> global_filtered_ranges;
+  size_t num_sections_;
 
-  // Callbacks and utility functions
+  // callbacks and utility functions
   void laserCallback(const sensor_msgs::msg::LaserScan::SharedPtr msg);
   void filterScanAndPublish(const sensor_msgs::msg::LaserScan::SharedPtr &msg);
   std::vector<float> divideIntoSectionsAndFindMin();
