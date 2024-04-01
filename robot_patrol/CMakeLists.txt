@@ -48,10 +48,18 @@ rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typ
 
 target_link_libraries(direction_service "${cpp_typesupport_target}")
 
+add_executable(test_service src/test_service.cpp)
+ament_target_dependencies(test_service
+  rclcpp
+  sensor_msgs
+)
+target_link_libraries(test_service "${cpp_typesupport_target}")
+
 # Install executables
 install(TARGETS
   patrol_node
   direction_service
+  test_service
   DESTINATION lib/${PROJECT_NAME}
 )
 

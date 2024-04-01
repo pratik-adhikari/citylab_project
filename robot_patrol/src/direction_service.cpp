@@ -11,7 +11,7 @@ class DirectionService : public rclcpp::Node {
 public:
   DirectionService() : Node("direction_service_node") {
     service_ = this->create_service<robot_patrol::srv::GetDirection>(
-        "get_direction",
+        "/direction_service",
         std::bind(&DirectionService::handle_service_request, this,
                   std::placeholders::_1, std::placeholders::_2));
 
@@ -24,9 +24,19 @@ private:
       const std::shared_ptr<robot_patrol::srv::GetDirection::Request> request,
       std::shared_ptr<robot_patrol::srv::GetDirection::Response> response) {
     auto laser_data = request->laser_data;
-    std::vector<float> filtered_ranges;
+    auto filtered_ranges = filterLaserData(laser_data);
+    auto section_totals = calculateSectionDistances(filtered_ranges);
+    auto safest_direction = determineSafestDirection(section_totals);
 
-    // Convert 360-degree laser data to front 180-degree data
+    response->direction = safest_direction;
+
+    RCLCPP_INFO(this->get_logger(), "Response sent: %s",
+                safest_direction.c_str());
+  }
+
+  std::vector<float>
+  filterLaserData(const sensor_msgs::msg::LaserScan &laser_data) {
+    std::vector<float> filtered_ranges;
     size_t quarterIdx = laser_data.ranges.size() / 4,
            threeQuartersIdx = laser_data.ranges.size() * 0.75;
     for (size_t i = threeQuartersIdx; i < laser_data.ranges.size(); ++i) {
@@ -37,10 +47,12 @@ private:
       filtered_ranges.push_back(
           std::isinf(laser_data.ranges[i]) ? 5.0f : laser_data.ranges[i]);
     }
+    return filtered_ranges;
+  }
 
-    // Divide the 180-degree data into 3 sections and calculate total distance
-    // in each section
-    size_t total_sections = 3; // left, front, right
+  std::vector<float>
+  calculateSectionDistances(const std::vector<float> &filtered_ranges) {
+    const size_t total_sections = 3;
     size_t points_per_section = filtered_ranges.size() / total_sections;
     std::vector<float> section_totals(total_sections, 0.0f);
 
@@ -52,26 +64,28 @@ private:
       section_totals[section] = std::accumulate(start_itr, end_itr, 0.0f);
     }
 
-    // Determine the safest direction based on the section with the maximum
-    // total distance
+    RCLCPP_INFO(this->get_logger(),
+                "Total distances - Left: %f, Front: %f, Right: %f",
+                section_totals[0], section_totals[1], section_totals[2]);
+
+    return section_totals;
+  }
+
+  std::string
+  determineSafestDirection(const std::vector<float> &section_totals) {
     auto max_iter =
         std::max_element(section_totals.begin(), section_totals.end());
     size_t safest_section = std::distance(section_totals.begin(), max_iter);
 
-    // Set the response direction based on the safest section
     switch (safest_section) {
     case 0:
-      response->direction = "left";
-      break;
+      return "left";
     case 1:
-      response->direction = "front";
-      break;
+      return "front";
     case 2:
-      response->direction = "right";
-      break;
+      return "right";
     default:
-      response->direction = "unknown";
-      break;
+      return "unknown";
     }
   }
 
