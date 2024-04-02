@@ -60,8 +60,11 @@ std::vector<float> DirectionService::calculateSectionDistances(
   size_t third = filtered_ranges.size() / 3;
   for (size_t i = 0; i < filtered_ranges.size(); ++i) {
     size_t section = i / third;
-    if (section < 3)
-      section_totals[section] += filtered_ranges[i];
+
+    if (section < 3) {
+      size_t corrected_section = 2 - section;
+      section_totals[corrected_section] += filtered_ranges[i];
+    }
   }
   return section_totals;
 }
