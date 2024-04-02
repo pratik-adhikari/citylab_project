@@ -1,97 +1,124 @@
-#include "rclcpp/rclcpp.hpp"
-#include "robot_patrol/srv/get_direction.hpp"
-#include "sensor_msgs/msg/laser_scan.hpp"
+#include "robot_patrol/direction_service.hpp" // Make sure the path matches the actual location
 
-#include <algorithm>
-#include <cmath>
-#include <string>
-#include <vector>
+DirectionService::DirectionService() : Node("direction_service_node") {
+  service_ = this->create_service<robot_patrol::srv::GetDirection>(
+      "/direction_service",
+      std::bind(&DirectionService::handle_service_request, this,
+                std::placeholders::_1, std::placeholders::_2));
+  filtered_scan_publisher_ =
+      this->create_publisher<sensor_msgs::msg::LaserScan>("filtered_scan", 10);
+  RCLCPP_INFO(this->get_logger(), "Direction service server has been started.");
+}
 
-class DirectionService : public rclcpp::Node {
-public:
-  DirectionService() : Node("direction_service_node") {
-    service_ = this->create_service<robot_patrol::srv::GetDirection>(
-        "/direction_service",
-        std::bind(&DirectionService::handle_service_request, this,
-                  std::placeholders::_1, std::placeholders::_2));
+void DirectionService::handle_service_request(
+    const std::shared_ptr<robot_patrol::srv::GetDirection::Request> request,
+    std::shared_ptr<robot_patrol::srv::GetDirection::Response> response) {
+  auto laser_data = request->laser_data;
+  auto filtered_ranges = filterLaserData(laser_data);
+  auto section_totals = calculateSectionDistances(filtered_ranges);
+  auto safest_direction = determineSafestDirection(section_totals);
 
-    RCLCPP_INFO(this->get_logger(),
-                "Direction service server has been started.");
+  response->direction = safest_direction;
+  last_decision_ =
+      safest_direction; // remembering the last decision sent for comparison
+
+  RCLCPP_INFO(this->get_logger(), "Response sent: %s",
+              safest_direction.c_str());
+}
+
+std::vector<float> DirectionService::filterLaserData(
+    const sensor_msgs::msg::LaserScan &laser_data) {
+  std::vector<float> filtered_ranges;
+  size_t totalRanges = laser_data.ranges.size();
+  size_t quarterIdx = totalRanges / 4, threeQuartersIdx = totalRanges * 0.75;
+
+  for (size_t i = threeQuartersIdx; i < totalRanges; ++i) {
+    filtered_ranges.push_back(std::min(laser_data.ranges[i], 3.0f));
+  }
+  for (size_t i = 0; i <= quarterIdx; ++i) {
+    filtered_ranges.push_back(std::min(laser_data.ranges[i], 3.0f));
   }
 
-private:
-  void handle_service_request(
-      const std::shared_ptr<robot_patrol::srv::GetDirection::Request> request,
-      std::shared_ptr<robot_patrol::srv::GetDirection::Response> response) {
-    auto laser_data = request->laser_data;
-    auto filtered_ranges = filterLaserData(laser_data);
-    auto section_totals = calculateSectionDistances(filtered_ranges);
-    auto safest_direction = determineSafestDirection(section_totals);
+  publishFilteredScan(laser_data, filtered_ranges);
 
-    response->direction = safest_direction;
+  return filtered_ranges;
+}
 
-    RCLCPP_INFO(this->get_logger(), "Response sent: %s",
-                safest_direction.c_str());
+void DirectionService::publishFilteredScan(
+    const sensor_msgs::msg::LaserScan &original_scan,
+    const std::vector<float> &filtered_ranges) {
+  sensor_msgs::msg::LaserScan filtered_scan = original_scan;
+  filtered_scan.ranges = filtered_ranges;
+  filtered_scan.angle_min = -M_PI / 2;
+  filtered_scan.angle_max = M_PI / 2;
+  filtered_scan_publisher_->publish(filtered_scan);
+}
+
+std::vector<float> DirectionService::calculateSectionDistances(
+    const std::vector<float> &filtered_ranges) {
+  std::vector<float> section_totals(3, 0.0);
+  size_t third = filtered_ranges.size() / 3;
+  for (size_t i = 0; i < filtered_ranges.size(); ++i) {
+    size_t section = i / third;
+    if (section < 3)
+      section_totals[section] += filtered_ranges[i];
   }
+  return section_totals;
+}
 
-  std::vector<float>
-  filterLaserData(const sensor_msgs::msg::LaserScan &laser_data) {
-    std::vector<float> filtered_ranges;
-    size_t quarterIdx = laser_data.ranges.size() / 4,
-           threeQuartersIdx = laser_data.ranges.size() * 0.75;
-    for (size_t i = threeQuartersIdx; i < laser_data.ranges.size(); ++i) {
-      filtered_ranges.push_back(
-          std::isinf(laser_data.ranges[i]) ? 5.0f : laser_data.ranges[i]);
+std::string DirectionService::determineSafestDirection(
+    const std::vector<float> &section_totals) {
+  float left_distance = section_totals[0];
+  float front_distance = section_totals[1];
+  float right_distance = section_totals[2];
+
+  RCLCPP_INFO(this->get_logger(),
+              "Total distances - Left: %f, Front: %f, Right: %f", left_distance,
+              front_distance, right_distance);
+
+  static int left_count = 0, right_count = 0,
+             front_count = 0; // Stability counters
+  const int decision_stability_threshold =
+      3; // Number of cycles before a decision is considered stable
+  std::string decision = last_decision_; // Default to last decision
+
+  if (left_distance + decision_threshold_ > right_distance &&
+      left_distance > front_distance) {
+    left_count++;
+    right_count = 0;
+    front_count = 0;
+    if (left_count > decision_stability_threshold) {
+      decision = "left";
     }
-    for (size_t i = 0; i <= quarterIdx; ++i) {
-      filtered_ranges.push_back(
-          std::isinf(laser_data.ranges[i]) ? 5.0f : laser_data.ranges[i]);
+  } else if (right_distance + decision_threshold_ > left_distance &&
+             right_distance > front_distance) {
+    right_count++;
+    left_count = 0;
+    front_count = 0;
+    if (right_count > decision_stability_threshold) {
+      decision = "right";
     }
-    return filtered_ranges;
+  } else if (front_distance >
+             decision_threshold_ + std::max(left_distance, right_distance)) {
+    front_count++;
+    left_count = 0;
+    right_count = 0;
+    if (front_count > decision_stability_threshold) {
+      decision = "front";
+    }
+  } else {
+    // No clear decision, maintain current direction but reset counters
+    left_count = right_count = front_count = 0;
   }
 
-  std::vector<float>
-  calculateSectionDistances(const std::vector<float> &filtered_ranges) {
-    const size_t total_sections = 3;
-    size_t points_per_section = filtered_ranges.size() / total_sections;
-    std::vector<float> section_totals(total_sections, 0.0f);
-
-    for (size_t section = 0; section < total_sections; ++section) {
-      auto start_itr = filtered_ranges.begin() + section * points_per_section;
-      auto end_itr = (section + 1 == total_sections)
-                         ? filtered_ranges.end()
-                         : start_itr + points_per_section;
-      section_totals[section] = std::accumulate(start_itr, end_itr, 0.0f);
-    }
-
-    RCLCPP_INFO(this->get_logger(),
-                "Total distances - Left: %f, Front: %f, Right: %f",
-                section_totals[0], section_totals[1], section_totals[2]);
-
-    return section_totals;
+  // Update only if decision changes
+  if (decision != last_decision_) {
+    last_decision_ = decision;
+    RCLCPP_INFO(this->get_logger(), "Safest direction: %s", decision.c_str());
   }
 
-  std::string
-  determineSafestDirection(const std::vector<float> &section_totals) {
-    auto max_iter =
-        std::max_element(section_totals.begin(), section_totals.end());
-    size_t safest_section = std::distance(section_totals.begin(), max_iter);
-
-    switch (safest_section) {
-    case 0:
-      return "left";
-    case 1:
-      return "front";
-    case 2:
-      return "right";
-    default:
-      return "unknown";
-    }
-  }
-
-  rclcpp::Service<robot_patrol::srv::GetDirection>::SharedPtr service_;
-};
-
+  return decision;
+}
 int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
   auto node = std::make_shared<DirectionService>();

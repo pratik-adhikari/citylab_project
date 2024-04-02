@@ -26,11 +26,15 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/GetDirection.srv"
   DEPENDENCIES sensor_msgs
 )
+##
+rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+
+ament_export_dependencies(rosidl_default_runtime)
 
 # Include directories
 include_directories(include)
 
-# Declare patrol_node executable
+# patrol_node 
 add_executable(patrol_node src/patrol.cpp)
 ament_target_dependencies(patrol_node
   rclcpp
@@ -38,28 +42,36 @@ ament_target_dependencies(patrol_node
   sensor_msgs
 )
 
-# Declare direction_service executable
+# direction_service
 add_executable(direction_service src/direction_service.cpp)
 ament_target_dependencies(direction_service
   rclcpp
   sensor_msgs
 )
-rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
-
-target_link_libraries(direction_service "${cpp_typesupport_target}")
-
+# rosidl_target_interfaces(direction_service ${PROJECT_NAME} rosidl_typesupport_cpp)
+target_link_libraries(direction_service ${cpp_typesupport_target})
+# test_service
 add_executable(test_service src/test_service.cpp)
 ament_target_dependencies(test_service
   rclcpp
   sensor_msgs
 )
-target_link_libraries(test_service "${cpp_typesupport_target}")
-
+# rosidl_target_interfaces(test_service ${PROJECT_NAME} rosidl_typesupport_cpp)
+target_link_libraries(test_service ${cpp_typesupport_target})
+# patrol_with_service
+add_executable(patrol_with_service src/patrol_with_service.cpp)
+ament_target_dependencies(patrol_with_service
+  rclcpp
+  sensor_msgs
+)
+# rosidl_target_interfaces(patrol_with_service ${PROJECT_NAME} rosidl_typesupport_cpp)
+target_link_libraries(patrol_with_service ${cpp_typesupport_target})
 # Install executables
 install(TARGETS
   patrol_node
   direction_service
   test_service
+  patrol_with_service
   DESTINATION lib/${PROJECT_NAME}
 )
 
