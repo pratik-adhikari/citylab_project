@@ -25,6 +25,7 @@ private:
   void laserCallback(const sensor_msgs::msg::LaserScan::SharedPtr msg);
   void filterScanAndPublish(const sensor_msgs::msg::LaserScan::SharedPtr &msg);
   std::vector<float> divideIntoSectionsAndFindMin();
+  float angleBias(float forward_distance, float criticalDistance);
   void findSafestDirection(const std::vector<float> &min_distances);
   void controlLoop();
 };

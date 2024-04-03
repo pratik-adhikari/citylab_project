@@ -36,7 +36,6 @@ void Patrol::filterScanAndPublish(
         std::isinf(msg->ranges[i]) ? 5.0f : msg->ranges[i]);
   }
 
-  // Update and publish the filtered scan
   sensor_msgs::msg::LaserScan filtered_scan = *msg;
   filtered_scan.ranges = global_filtered_ranges;
   filtered_scan.angle_min = -M_PI / 2;
@@ -56,13 +55,6 @@ std::vector<float> Patrol::divideIntoSectionsAndFindMin() {
     auto end_itr = (section + 1 == sections) ? global_filtered_ranges.end()
                                              : start_itr + points_per_section;
     section_min_distances[section] = *std::min_element(start_itr, end_itr);
-
-    // if (section_min_distances[section] < 0.5) {
-    //   float angle = -M_PI / 2 + (static_cast<float>(section) / sections) *
-    //   M_PI; RCLCPP_INFO(this->get_logger(),
-    //               "Section %zu: Min distance %.2f at angle %.2f radians",
-    //               section + 1, section_min_distances[section], angle);
-    // }
   }
 
   return section_min_distances;
@@ -70,12 +62,17 @@ std::vector<float> Patrol::divideIntoSectionsAndFindMin() {
 
 void Patrol::findSafestDirection(const std::vector<float> &min_distances) {
   const float criticalDistance = 0.4;
-  size_t safest_section = 0;
-  float max_distance = 0.0; // tracking maximum individual distance
+  const float forwardBias = 3.5;
+  size_t safest_section = min_distances.size() / 2;
+  float max_distance = 0.0;
 
   for (size_t i = 0; i < min_distances.size(); ++i) {
     float current_distance = min_distances[i];
-    // Adding adjacent distances if they exist
+
+    if (i == safest_section) {
+      current_distance *= forwardBias;
+    }
+
     if (i > 0)
       current_distance +=
           std::max(0.0f, min_distances[i - 1] - criticalDistance);
@@ -83,36 +80,42 @@ void Patrol::findSafestDirection(const std::vector<float> &min_distances) {
       current_distance +=
           std::max(0.0f, min_distances[i + 1] - criticalDistance);
 
-    if (current_distance > max_distance && min_distances[i] > 0.6) {
+    if (current_distance > max_distance) {
       safest_section = i;
-      max_distance =
-          current_distance; // Useing the combined metric for comparison
+      max_distance = current_distance;
     }
   }
 
-  // the turning angle calculate
   float angle_per_section = M_PI / (min_distances.size() - 1);
   direction_ =
       (safest_section - (min_distances.size() / 2.0f)) * angle_per_section;
 
+  direction_ *= angleBias(min_distances[6], criticalDistance);
+
+  float section_7_distance = min_distances[6];
   RCLCPP_INFO(this->get_logger(),
               "Safest direction: Section %zu/%zu, Angle: %.2f radians (%.2f "
-              "degrees), Max distance: %.2f",
+              "degrees), Max distance: %.2f, Section 7 Distance: %.2f",
               safest_section + 1, min_distances.size(), direction_,
-              direction_ * (180.0 / M_PI), max_distance);
+              direction_ * (180.0 / M_PI), max_distance, section_7_distance);
+}
+
+float Patrol::angleBias(float forward_distance, float criticalDistance) {
+  // Reduce turning angle if the forward distance is greater than
+  // criticalDistance
+  if (forward_distance > criticalDistance) {
+    return std::max(0.1f, 1 - (forward_distance - criticalDistance) /
+                                  forward_distance);
+  }
+
+  return 1.0f;
 }
 
 void Patrol::controlLoop() {
   geometry_msgs::msg::Twist cmd_vel;
-  cmd_vel.linear.x = 0.1; // Forward speed
-
-  cmd_vel.angular.z = direction_; // Angular velocity: direction_ by 1/2
-
-  velocity_publisher_->publish(cmd_vel); // Publish the command velocity
-
-  //   RCLCPP_INFO(this->get_logger(),
-  //               "Publishing velocity: linear.x=%f, angular.z=%f degrees",
-  //               cmd_vel.linear.x, cmd_vel.angular.z * (180 / M_PI));
+  cmd_vel.linear.x = 0.1;
+  cmd_vel.angular.z = direction_;
+  velocity_publisher_->publish(cmd_vel);
 }
 
 int main(int argc, char *argv[]) {
